@@ -20,6 +20,12 @@ setuptools.setup(
     packages=setuptools.find_packages(),
     include_package_data=True,
 
+    install_requires=[
+        "pysam",
+        "mappy",
+        "numpy",
+    ],
+
     entry_points = {
         "console_scripts": [
             "dehumanize=dehumanizer:cli",
