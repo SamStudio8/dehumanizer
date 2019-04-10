@@ -39,7 +39,7 @@ def main(args):
     if args.extension:
         seqs = sorted([
             os.path.join(args.dirty, x) for x in os.listdir(args.dirty) if x.endswith(args.extension)
-        ]),
+        ])
     else:
         seqs = [args.dirty]
 
@@ -55,6 +55,7 @@ def main(args):
 
     for fastx_i, fastx_path in enumerate(seqs):
         sys.stderr.write("Counting sequences...\n")
+        sys.stderr.write("[%d/%d] %s\n" % (fastx_i+1, len(seqs), str(fastx_path)))
         n_seqs = 0
         for name, seq, qual in mp.fastx_read(fastx_path):
             n_seqs += 1
@@ -83,7 +84,7 @@ def main(args):
                     # Break the aligner loop as we've already seen a hit
                     break
 
-        sys.stderr.write("[%d/%d] Preparing %d sequences from input\n" % (fastx_i+1, len(seqs), n_seqs))
+        sys.stderr.write("[%d/%d] Counted %d sequences\n" % (fastx_i+1, len(seqs), n_seqs))
         sys.stderr.write("[%d/%d] %s\n" % (fastx_i+1, len(seqs), fastx_path))
 
         work_queue = Queue(maxsize=args.threads*1000) # Queue up to 1000 seqs per process
