@@ -14,7 +14,8 @@ def load_manifest(path):
         "references": [
         ],
     }
-    for line_i, line in enumerate(open(path)):
+    manifest_fh = open(path)
+    for line_i, line in enumerate(manifest_fh):
         fields = line.strip().split("\t")
 
         if line[0] == '#':
@@ -27,6 +28,7 @@ def load_manifest(path):
                 "name": fields[0],
                 "path": fields[1],
             })
+    manifest_fh.close()
     return manifest
 
 
