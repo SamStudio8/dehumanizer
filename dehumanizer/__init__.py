@@ -3,10 +3,40 @@ import argparse
 import ctypes
 import sys
 import os
-import pysam
 import mappy as mp
 import numpy as np
 from datetime import datetime
+
+def readfq(fp): # this is a generator function
+    last = None # this is a buffer keeping the last unprocessed line
+    while True: # mimic closure; is it a bad idea?
+        if not last: # the first record or a record following a fastq
+            for l in fp: # search for the start of the next record
+                if l[0] in '>@': # fasta/q header line
+                    last = l[:-1] # save this line
+                    break
+        if not last: break
+        name, seqs, last = last[1:].partition(" ")[0], [], None
+        for l in fp: # read the sequence
+            if l[0] in '@+>':
+                last = l[:-1]
+                break
+            seqs.append(l[:-1])
+        if not last or last[0] != '+': # this is a fasta record
+            yield name, ''.join(seqs), None # yield a fasta record
+            if not last: break
+        else: # this is a fastq record
+            seq, leng, seqs = ''.join(seqs), 0, []
+            for l in fp: # read the quality
+                seqs.append(l[:-1])
+                leng += len(l) - 1
+                if leng >= len(seq): # have read enough quality
+                    last = None
+                    yield name, seq, ''.join(seqs); # yield a fastq record
+                    break
+            if last: # reach EOF before reading enough quality
+                yield name, seq, None # yield a fasta record instead
+                break
 
 def load_manifest(path):
     manifest = {
@@ -37,123 +67,152 @@ def load_manifest(path):
 #               Need to think carefully about this however; as the mp.Aligner is primed to a particular reference and shared
 def main(args):
 
-    log = open(args.clean + ".dehumanizer.log.txt", 'a')
-    #if args.extension:
-    #    seqs = sorted([
-    #        os.path.join(args.dirty, x) for x in os.listdir(args.dirty) if x.endswith(args.extension)
-    #    ])
-    #else:
-    #    seqs = [args.dirty]
-    seqs = [args.dirty]
+    log = open(args.dirty + ".dehumanizer.log.txt", 'w')
+    fastx_path = args.dirty
 
     manifest = load_manifest(args.manifest)
     log.write("fastx\tn_sequences\tn_dropped\tn_saved\t-\t%s\n" % "\t".join([x["name"] for x in manifest["references"]]))
 
     break_first = not args.nobreak # break on first hit, otherwise we can use this to 'survey' hits to different databases
-    sys.stderr.write("[INFO] Booting minimap2 aligners.\n")
-    aligners = []
-    for ref_i, ref_manifest in enumerate(manifest["references"]):
-        aligners.append( mp.Aligner(ref_manifest["path"], preset=manifest["preset"]) )
-    sys.stderr.write("[INFO] Aligners at the ready.\n")
 
-    for fastx_i, fastx_path in enumerate(seqs):
-        sys.stderr.write("[%d/%d] %s\n" % (fastx_i+1, len(seqs), str(fastx_path)))
-        n_seqs = 0
+    n_seqs = 0
+    if args.n:
+        n_seqs = args.n
+    else:
         for name, seq, qual in mp.fastx_read(fastx_path):
             n_seqs += 1
 
-        sys.stderr.write("[INFO] Preparing memory for flags.\n")
-        super_flag_matrix = np.frombuffer(Array(ctypes.c_bool, n_seqs*len(aligners), lock=False), dtype=ctypes.c_bool)
-        super_flag_matrix = super_flag_matrix.reshape(n_seqs, len(aligners))
-
-        def map_seqs(work_q, ref_i, aligners, break_first):
-            while True:
-                work = work_q.get()
-                if work is None:
-                    return
-
-                for a_i, a in enumerate(aligners):
-                    super_flag_matrix[ work["i"] ][a_i] = 0
-                    for hit in a.map(work["seq"]):
-                        super_flag_matrix[ work["i"] ][a_i] = 1
-
-                        if break_first:
-                            break
-                    else:
-                        # Continue the outer loop to the next aligner, as no hit was found
-                        continue
-                    # Break the aligner loop as we've already seen a hit
-                    break
-
-        sys.stderr.write("[%d/%d] Counted %d sequences\n" % (fastx_i+1, len(seqs), n_seqs))
-        sys.stderr.write("[%d/%d] %s\n" % (fastx_i+1, len(seqs), fastx_path))
-
-        work_queue = Queue(maxsize=args.threads*1000) # Queue up to 1000 seqs per process
-        processes = []
-
-        for _ in range(args.threads):
-            p = Process(target=map_seqs, args=(work_queue,ref_i,aligners,break_first))
-            processes.append(p)
-
-        for p in processes:
-            p.start()
-
-        # Begin adding seqs
-        sys.stderr.write("[INFO] Feeding sequences to queue\n")
-
-        start_clock = datetime.now()
-        for read_i, read_tuple in enumerate(mp.fastx_read(fastx_path)):
-            if read_i % args.blockrep == 0:
-                end_clock = datetime.now()
-                sys.stderr.write("[NOTE] Queued Read#%d. Last block pushed in %s (%s pseq.)\n" % (read_i, str(end_clock - start_clock), str((end_clock-start_clock)/args.blockrep) ))
-                start_clock = datetime.now()
-
-            # Align
-            # queue will block until there's room
-            work_queue.put({"i": read_i, "seq": read_tuple[1]})
-
-        sys.stderr.write("[INFO] Finished feeding sequences\n")
-
-        # Add sentinels to kill off processes
-        for _ in range(args.threads):
-            work_queue.put(None)
-
-        sys.stderr.write("[INFO] Wait for queues to empty... be patient\n")
-        # Wait for processes to complete work
-        for p in processes:
-            p.join()
+    sys.stderr.write("[INFO] Preparing memory for flags.\n")
+    super_flag_matrix = np.frombuffer(Array(ctypes.c_bool, n_seqs*len(manifest["references"]), lock=False), dtype=ctypes.c_bool)
+    super_flag_matrix = super_flag_matrix.reshape(n_seqs, len(manifest["references"]))
+    sys.stderr.write("[INFO] Raised %d x %d flags.\n" % (n_seqs, len(manifest["references"])))
 
 
-        flat_dropped = ( super_flag_matrix.sum(axis=1) > 0 )
-        total_dropped = flat_dropped.sum()
-        sys.stderr.write("[%d/%d] Dropped %d sequences\n" % (fastx_i+1, len(seqs), flat_dropped.sum()))
+    #aligners = []
+    #for ref_i, ref_manifest in enumerate(manifest["references"]):
+    #    aligners.append([])
+    #    sys.stderr.write("[%d/%d] Booting minimap2 aligners.\n" % (ref_i+1, len(manifest["references"])))
+    #
+    #    for _ in range(args.threads):
+    #        aligners[ref_i].append( mp.Aligner(ref_manifest["path"], preset=manifest["preset"]) )
 
-        # Now...
+    def map_seqs(work_q, manifest, break_first, block_i):
+        aligners = []
+        for ref_i, ref_manifest in enumerate(manifest["references"]):
+            #sys.stderr.write("[%d:%d/%d] Booting minimap2 aligners.\n" % (block_i, ref_i+1, len(manifest["references"])))
+            aligners.append( mp.Aligner(ref_manifest["path"], preset=manifest["preset"]) )
+        sys.stderr.write("[%d:] minimap2 aligners ready.\n" % (block_i))
+
+        while True:
+            work = work_q.get()
+            if work is None:
+                return
+
+            for ref_i, ref_manifest in enumerate(manifest["references"]):
+                super_flag_matrix[ work["i"] ][ref_i] = 0
+
+            for ref_i, ref_manifest in enumerate(manifest["references"]):
+                for hit in aligners[ref_i].map(work["seq"]):
+
+                    if args.minlen:
+                        st = min(hit.q_st, hit.q_en)
+                        en = max(hit.q_st, hit.q_en)
+                        if ((en - st) / len(work["seq"])) * 100 < args.minlen:
+                            continue
+
+                    if args.minid:
+                        # http://lh3.github.io/2018/11/25/on-the-definition-of-sequence-identity
+                        # "In the PAF format, column 10 divived by column 11 gives the BLAST identity."
+                        bscore = hit.mlen / hit.blen
+                        if bscore * 100 < args.minid:
+                            continue
+
+                    # Criteria satisifed
+                    super_flag_matrix[ work["i"] ][ref_i] = 1
+                    if break_first:
+                        break
+                else:
+                    # Continue the outer loop to the next aligner, as no hit was found
+                    continue
+                # Break the aligner loop as we've already seen a hit
+                break
+
+    sys.stderr.write("[INFO] Counted %d sequences\n" % (n_seqs))
+    sys.stderr.write("[INFO] %s\n" % (fastx_path))
+
+    work_queue = Queue(maxsize=args.threads*5000) # Queue N seqs per process
+    processes = []
+
+    for _ in range(args.threads):
+        p = Process(target=map_seqs, args=(work_queue,manifest,break_first,_))
+        processes.append(p)
+
+    for p in processes:
+        p.start()
+
+    # Begin adding seqs
+    sys.stderr.write("[INFO] Feeding sequences to queue\n")
+    start_clock = datetime.now()
+    for read_i, read_tuple in enumerate(mp.fastx_read(fastx_path)):
+        if read_i % args.blockrep == 0:
+            end_clock = datetime.now()
+            sys.stderr.write("[NOTE] Queued Read#%d. Last block pushed in %s (%s pseq.)\n" % (read_i, str(end_clock - start_clock), str((end_clock-start_clock)/args.blockrep) ))
+            start_clock = datetime.now()
+        if args.n:
+            if read_i+1 > args.n:
+                break
+
+        # Align
+        # queue will block until there's room
+        work_queue.put({"i": read_i, "seq": read_tuple[1]})
+
+    sys.stderr.write("[INFO] Finished feeding sequences\n")
+
+    # Add sentinels to kill off processes
+    sys.stderr.write("[INFO] Wait for queues to empty... be patient\n")
+    for _ in range(args.threads):
+        work_queue.put(None)
+
+    # Wait for processes to complete work
+    for p in processes:
+        p.join()
+
+
+
+    flat_dropped = ( super_flag_matrix.sum(axis=1) > 0 )
+    total_dropped = flat_dropped.sum()
+    sys.stderr.write("[INFO] Dropped %d sequences\n" % (flat_dropped.sum()))
+
+    # Now...
+    clean_fq_p = args.clean #os.path.join(args.clean, "%s.%s.%s" % (".".join(fp[:-1]), "dehumanizer.clean", fp[-1]))
+    if args.clean == "-":
+        clean_fq = sys.stdout
+    else:
         fp = os.path.basename(fastx_path).split(".")
-        clean_fq_p = args.clean #os.path.join(args.clean, "%s.%s.%s" % (".".join(fp[:-1]), "dehumanizer.clean", fp[-1]))
         clean_fq = open(clean_fq_p, 'w')
+        sys.stderr.write("[INFO] Writing FASTX %s\n" % (clean_fq_p))
 
-        #if args.keepdirty:
-        #    dirty_fq_p = os.path.join(args.clean, "%s.%s.%s" % (".".join(fp[:-1]), "dehumanizer.dirty", fp[-1]))
-        #    dirty_fq = open(dirty_fq_p, 'w') #TODO gzip?
+    #if args.keepdirty:
+    #    dirty_fq_p = os.path.join(args.clean, "%s.%s.%s" % (".".join(fp[:-1]), "dehumanizer.dirty", fp[-1]))
+    #    dirty_fq = open(dirty_fq_p, 'w') #TODO gzip?
 
 
-        # Output FASTX
-        sys.stderr.write("[%d/%d] Writing FASTX %s\n" % (fastx_i+1, len(seqs), clean_fq_p))
-        #if args.keepdirty:
-        #    sys.stderr.write("[%d/%d] Writing FASTX %s\n" % (fastx_i+1, len(seqs), dirty_fq_p))
-        for read_i, read in enumerate(pysam.FastxFile(fastx_path)): #TODO this is garbage for gz
-            if not flat_dropped[read_i]:
-                clean_fq.write(str(read)+'\n')
-            #else:
-            #    if args.keepdirty:
-            #        dirty_fq.write(str(read)+'\n')
-        clean_fq.close()
-        #if args.keepdirty:
-        #    dirty_fq.close()
+    # Output FASTX
+    #if args.keepdirty:
+    #    sys.stderr.write("[%d/%d] Writing FASTX %s\n" % (fastx_i+1, len(seqs), dirty_fq_p))
+    for read_i, read_tuple in readfq(fastx_path):
 
-        each_dropped = list( super_flag_matrix.sum(axis=0) )
-        log.write("%s\t%d\t%d\t%d\t-\t%s\n" % (os.path.basename(clean_fq_p), n_seqs, total_dropped, n_seqs-total_dropped, "\t".join([str(x) for x in each_dropped])))
+        if not flat_dropped[read_i]:
+            clean_fq.write("%s\n%s\n+\n%s\n" % (read_tuple[0], read_tuple[1], read_tuple[2]))
+        #else:
+        #    if args.keepdirty:
+        #        dirty_fq.write(str(read)+'\n')
+    clean_fq.close()
+    #if args.keepdirty:
+    #    dirty_fq.close()
+
+    each_dropped = list( super_flag_matrix.sum(axis=0) )
+    log.write("%s\t%d\t%d\t%d\t-\t%s\n" % (os.path.basename(clean_fq_p), n_seqs, total_dropped, n_seqs-total_dropped, "\t".join([str(x) for x in each_dropped])))
     log.close()
 
 
@@ -162,11 +221,12 @@ def cli():
     parser = argparse.ArgumentParser()
     parser.add_argument("manifest", help="reference manifest")
     parser.add_argument("dirty", help="input dirty file")
-    parser.add_argument("clean", help="output clean file")
+    parser.add_argument("-o", "--clean", help="output clean file [default -]", default="-")
 
-    parser.add_argument("-t", "--threads", help="number of minimap2 process queues to spawn [1]", default=1, type=int)
-    #parser.add_argument("--minid", help="minimum sequence id to determine a hit [minimap2 default]")
-    #parser.add_argument("--minlen", help="minimum alignment length to determine a hit [minimap2 default]")
+    parser.add_argument("-t", "--threads", help="number of minimap2 process queues to spawn PER REFERENCE [1]", default=1, type=int)
+    parser.add_argument("-n", help="number of reads (prevents having to count)", type=int)
+    parser.add_argument("--minid", help="min proportion of (L-NM)/L to determine a hit [report any hit]", type=float)
+    parser.add_argument("--minlen", help="min proportion of read aligned to accept a hit [report any hit]", type=float)
 
     parser.add_argument("--nobreak", help="dont break on the first database hit [False]", action="store_true", default=False)
     #parser.add_argument("--extension", help="dirty is a folder, containing files to clean with a particular extension", default=None)
