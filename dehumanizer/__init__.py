@@ -202,7 +202,7 @@ def cli():
         log = open(args.log, 'w')
 
     manifest = load_manifest(args.manifest)
-    log.write("fastx\tn_sequences\tn_dropped\tn_saved\t-\t%s\n" % "\t".join([x["name"] for x in manifest["references"]]))
+    log.write("dirty\tn_sequences\tn_dropped\tn_saved\t-\t%s\n" % "\t".join([x["name"] for x in manifest["references"]]))
 
     if args.fastx:
         dh_fastx(log, manifest, args)
