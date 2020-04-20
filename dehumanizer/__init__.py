@@ -5,6 +5,7 @@ import sys
 import os
 import mappy as mp
 import numpy as np
+import pysam
 from datetime import datetime
 
 
@@ -33,7 +34,47 @@ def load_manifest(path):
 
 
 def df_bam(log, manifest, args):
-    bam_path = args.dirty
+    dirty_bam = pysam.AlignmentFile(args.dirty)
+    clean_bam = pysam.AlignmentFile(args.clean, "wb", template=dirty_bam)
+
+    aligners = []
+    for ref_i, ref_manifest in enumerate(manifest["references"]):
+        aligners.append( mp.Aligner(ref_manifest["path"], preset=manifest["preset"]) )
+    sys.stderr.write("[%d:] minimap2 aligners ready.\n" % (block_i))
+
+    for read in dirty_bam.fetch():
+        pass
+        if True:
+            clean_bam.write(read)
+
+        read_is_bad = False
+        for ref_i, ref_manifest in enumerate(manifest["references"]):
+            for hit in aligners[ref_i].map(read.query_sequence):
+
+                if args.minlen:
+                    st = min(hit.q_st, hit.q_en)
+                    en = max(hit.q_st, hit.q_en)
+                    if ((en - st) / len(work["seq"])) * 100 >= args.minlen:
+                        read_is_bad = True
+
+                if args.minid:
+                    # http://lh3.github.io/2018/11/25/on-the-definition-of-sequence-identity
+                    # "In the PAF format, column 10 divived by column 11 gives the BLAST identity."
+                    bscore = hit.mlen / hit.blen
+                    if bscore * 100 >= args.minid:
+                        read_is_bad = True
+
+                # Criteria satisifed
+                if read_is_bad and break_first:
+                    break
+            else:
+                # Continue the outer loop to the next aligner, as no hit was found
+                continue
+            # Break the aligner loop as we've already break'ed a hit
+            break
+
+    dirty_bam.close()
+    clean_bam.close()
 
 
 #TODO FUTURE Would be good to have another layer of multiproc that poured reads from multiple files to any available aligners
@@ -41,8 +82,6 @@ def df_bam(log, manifest, args):
 def dh_fastx(log, manifest, args):
 
     fastx_path = args.dirty
-
-
     break_first = not args.nobreak # break on first hit, otherwise we can use this to 'survey' hits to different databases
 
     n_seqs = 0
@@ -188,13 +227,17 @@ def cli():
 
     parser.add_argument("-t", "--threads", help="number of minimap2 process queues to spawn PER REFERENCE [1]", default=1, type=int)
     parser.add_argument("-n", help="number of reads (prevents having to count)", type=int)
-    parser.add_argument("--minid", help="min proportion of (L-NM)/L to determine a hit [report any hit]", type=float)
-    parser.add_argument("--minlen", help="min proportion of read aligned to accept a hit [report any hit]", type=float)
+    parser.add_argument("--minid", help="min %proportion of (L-NM)/L to determine a hit", type=float, default=None)
+    parser.add_argument("--minlen", help="min %proportion of read aligned to accept a hit", type=float, default=None)
 
     parser.add_argument("--nobreak", help="dont break on the first database hit [False]", action="store_true", default=False)
     parser.add_argument("--blockrep", help="report progress after a block of N sequences [100000]", default=100000, type=int)
 
     args = parser.parse_args()
+
+    if not args.minid and not args.minlen:
+        sys.stderr.write("You must set a minimum identity (--minid) and/or minimum length (--minlen).\n")
+        sys.exit(1)
 
     if not args.log:
         log = open(args.dirty + ".dehumanizer.log.txt", 'w')
