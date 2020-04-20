@@ -31,7 +31,7 @@ def load_manifest(path, preset):
 
 
 def dh_bam(log, manifest, args):
-    dirty_bam = pysam.AlignmentFile(args.dirty, "r")
+    dirty_bam = pysam.AlignmentFile(args.dirty)
     clean_bam = pysam.AlignmentFile(args.clean, "wb", template=dirty_bam)
     break_first = not args.nobreak # break on first hit, otherwise we can use this to 'survey' hits to different databases
 
@@ -244,17 +244,17 @@ def cli():
 
     parser.add_argument("-t", "--threads", help="number of minimap2 process queues to spawn PER REFERENCE [1]", default=1, type=int)
     parser.add_argument("-n", help="number of reads (prevents having to count)", type=int)
-    parser.add_argument("--minid", help="min %proportion of (L-NM)/L to determine a hit", type=float, default=None)
-    parser.add_argument("--minlen", help="min %proportion of read aligned to accept a hit", type=float, default=None)
+    parser.add_argument("--minid", help="min %proportion of (L-NM)/L to determine a hit [use all hits]", type=float, default=None)
+    parser.add_argument("--minlen", help="min %proportion of read aligned to accept a hit [use all hits]", type=float, default=None)
 
     parser.add_argument("--nobreak", help="dont break on the first database hit [False]", action="store_true", default=False)
     parser.add_argument("--blockrep", help="report progress after a block of N sequences [100000]", default=100000, type=int)
 
     args = parser.parse_args()
 
-    if not args.minid and not args.minlen:
-        sys.stderr.write("You must set a minimum identity (--minid) and/or minimum length (--minlen).\n")
-        sys.exit(1)
+    #if not args.minid and not args.minlen:
+    #    sys.stderr.write("You must set a minimum identity (--minid) and/or minimum length (--minlen).\n")
+    #    sys.exit(1)
 
     if not args.log:
         log = open(args.dirty + ".dehumanizer.log.txt", 'w')
