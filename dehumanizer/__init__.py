@@ -9,26 +9,23 @@ import pysam
 from datetime import datetime
 
 
-def load_manifest(path):
+def load_manifest(path, preset):
     manifest = {
-        "preset": "",
+        "preset": preset,
         "references": [
         ],
     }
     manifest_fh = open(path)
     for line_i, line in enumerate(manifest_fh):
-        fields = line.strip().split("\t")
+        fields = line.strip().split() # split on any whitespace if you have whitespace in your ref name you have bigger problems 
 
         if line[0] == '#':
             continue
 
-        if line_i == 0:
-            manifest["preset"] = fields[0]
-        else:
-            manifest["references"].append({
-                "name": fields[0],
-                "path": fields[1],
-            })
+        manifest["references"].append({
+            "name": fields[0],
+            "path": fields[1],
+        })
     manifest_fh.close()
     return manifest
 
@@ -235,6 +232,8 @@ def cli():
     type_p.add_argument("--bam", action="store_true")
     type_p.add_argument("--fastx", action="store_true")
 
+    parser.add_argument("--preset", help="mappy aligner preset", required=True)
+
     parser.add_argument("-o", "--clean", help="output clean file [default -]", default="-")
     parser.add_argument("--log", help="log path [default <dirty>.dehumanizer.log.txt]", default=None)
 
@@ -257,7 +256,7 @@ def cli():
     else:
         log = open(args.log, 'w')
 
-    manifest = load_manifest(args.manifest)
+    manifest = load_manifest(args.manifest, args.preset)
     log.write("dirty\tn_sequences\tn_dropped\tn_saved\t-\t%s\n" % "\t".join([x["name"] for x in manifest["references"]]))
 
     if args.fastx:
