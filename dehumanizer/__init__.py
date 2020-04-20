@@ -38,15 +38,17 @@ def df_bam(log, manifest, args):
     clean_bam = pysam.AlignmentFile(args.clean, "wb", template=dirty_bam)
 
     aligners = []
+    each_dropped = []
     for ref_i, ref_manifest in enumerate(manifest["references"]):
         aligners.append( mp.Aligner(ref_manifest["path"], preset=manifest["preset"]) )
+        each_dropped.append(0)
     sys.stderr.write("[%d:] minimap2 aligners ready.\n" % (block_i))
 
-    for read in dirty_bam.fetch():
-        pass
-        if True:
-            clean_bam.write(read)
 
+    n_seqs = 0
+    n_baddies = 0
+    for read in dirty_bam.fetch():
+        n_seqs += 1
         read_is_bad = False
         for ref_i, ref_manifest in enumerate(manifest["references"]):
             for hit in aligners[ref_i].map(read.query_sequence):
@@ -65,13 +67,24 @@ def df_bam(log, manifest, args):
                         read_is_bad = True
 
                 # Criteria satisifed
-                if read_is_bad and break_first:
-                    break
+                if read_is_bad:
+                    each_dropped[ref_i] += 1
+                    if break_first:
+                        break
+
             else:
                 # Continue the outer loop to the next aligner, as no hit was found
                 continue
             # Break the aligner loop as we've already break'ed a hit
             break
+
+        if not read_is_bad:
+            clean_bam.write(read)
+        else:
+            n_baddies += 1
+
+    sys.stderr.write("[INFO] Dropped %d sequences\n" % n_baddies)
+    log.write("%s\t%d\t%d\t%d\t-\t%s\n" % (os.path.basename(args.clean), n_seqs, n_baddies, n_seqs-n_baddies, "\t".join([str(x) for x in each_dropped])))
 
     dirty_bam.close()
     clean_bam.close()
