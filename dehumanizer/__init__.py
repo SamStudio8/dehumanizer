@@ -33,6 +33,7 @@ def load_manifest(path, preset):
 def dh_bam(log, manifest, args):
     dirty_bam = pysam.AlignmentFile(args.dirty, "r")
     clean_bam = pysam.AlignmentFile(args.clean, "wb", template=dirty_bam)
+    break_first = not args.nobreak # break on first hit, otherwise we can use this to 'survey' hits to different databases
 
     aligners = []
     each_dropped = []
@@ -50,7 +51,7 @@ def dh_bam(log, manifest, args):
         for ref_i, ref_manifest in enumerate(manifest["references"]):
             for hit in aligners[ref_i].map(read.query_sequence):
 
-                if not args.minlen or args.minid:
+                if not args.minlen or not args.minid:
                     # a hit is a hit
                     read_is_bad = True
                 else:
@@ -70,7 +71,7 @@ def dh_bam(log, manifest, args):
                 # Criteria satisifed
                 if read_is_bad:
                     each_dropped[ref_i] += 1
-                    if args.break_first:
+                    if break_first:
                         break
 
             else:
