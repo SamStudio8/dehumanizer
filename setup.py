@@ -5,7 +5,7 @@ import setuptools
 
 setuptools.setup(
     name="dehumanizer",
-    version="0.2.0",
+    version="0.2.1",
     url="https://github.com/samstudio8/dehumanizer",
 
     description="A command line tool for rapidly ridding reads of horrid humans",

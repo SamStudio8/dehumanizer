@@ -184,6 +184,7 @@ def cli():
     type_p.add_argument("--fastx", action="store_true")
 
     parser.add_argument("-o", "--clean", help="output clean file [default -]", default="-")
+    parser.add_argument("--log", help="log path [default <dirty>.dehumanizer.log.txt]", default=None)
 
     parser.add_argument("-t", "--threads", help="number of minimap2 process queues to spawn PER REFERENCE [1]", default=1, type=int)
     parser.add_argument("-n", help="number of reads (prevents having to count)", type=int)
@@ -193,12 +194,16 @@ def cli():
     parser.add_argument("--nobreak", help="dont break on the first database hit [False]", action="store_true", default=False)
     parser.add_argument("--blockrep", help="report progress after a block of N sequences [100000]", default=100000, type=int)
 
+    args = parser.parse_args()
 
-    log = open(args.dirty + ".dehumanizer.log.txt", 'w')
+    if not args.log:
+        log = open(args.dirty + ".dehumanizer.log.txt", 'w')
+    else:
+        log = open(args.log, 'w')
+
     manifest = load_manifest(args.manifest)
     log.write("fastx\tn_sequences\tn_dropped\tn_saved\t-\t%s\n" % "\t".join([x["name"] for x in manifest["references"]]))
 
-    args = parser.parse_args()
     if args.fastx:
         dh_fastx(log, manifest, args)
     elif args.bam:
