@@ -32,16 +32,16 @@ def load_manifest(path):
     return manifest
 
 
+def df_bam(log, manifest, args):
+    bam_path = args.dirty
+
 
 #TODO FUTURE Would be good to have another layer of multiproc that poured reads from multiple files to any available aligners
 #               Need to think carefully about this however; as the mp.Aligner is primed to a particular reference and shared
-def main(args):
+def dh_fastx(log, manifest, args):
 
-    log = open(args.dirty + ".dehumanizer.log.txt", 'w')
     fastx_path = args.dirty
 
-    manifest = load_manifest(args.manifest)
-    log.write("fastx\tn_sequences\tn_dropped\tn_saved\t-\t%s\n" % "\t".join([x["name"] for x in manifest["references"]]))
 
     break_first = not args.nobreak # break on first hit, otherwise we can use this to 'survey' hits to different databases
 
@@ -154,7 +154,7 @@ def main(args):
     sys.stderr.write("[INFO] Dropped %d sequences\n" % (flat_dropped.sum()))
 
     # Now...
-    clean_fq_p = args.clean #os.path.join(args.clean, "%s.%s.%s" % (".".join(fp[:-1]), "dehumanizer.clean", fp[-1]))
+    clean_fq_p = args.clean
     if args.clean == "-":
         clean_fq = sys.stdout
     else:
@@ -165,14 +165,12 @@ def main(args):
 
     # Output FASTX
     for read_i, read_tuple in enumerate(mp.fastx_read(fastx_path)):
-
         if not flat_dropped[read_i]:
             clean_fq.write("@%s\n%s\n+\n%s\n" % (read_tuple[0], read_tuple[1], read_tuple[2]))
     clean_fq.close()
 
     each_dropped = list( super_flag_matrix.sum(axis=0) )
     log.write("%s\t%d\t%d\t%d\t-\t%s\n" % (os.path.basename(clean_fq_p), n_seqs, total_dropped, n_seqs-total_dropped, "\t".join([str(x) for x in each_dropped])))
-    log.close()
 
 
 def cli():
@@ -195,8 +193,18 @@ def cli():
     parser.add_argument("--nobreak", help="dont break on the first database hit [False]", action="store_true", default=False)
     parser.add_argument("--blockrep", help="report progress after a block of N sequences [100000]", default=100000, type=int)
 
-    main(parser.parse_args())
 
+    log = open(args.dirty + ".dehumanizer.log.txt", 'w')
+    manifest = load_manifest(args.manifest)
+    log.write("fastx\tn_sequences\tn_dropped\tn_saved\t-\t%s\n" % "\t".join([x["name"] for x in manifest["references"]]))
+
+    args = parser.parse_args()
+    if args.fastx:
+        dh_fastx(log, manifest, args)
+    elif args.bam:
+        dh_bam(log, manifest, args)
+
+    log.close()
 
 if __name__ == "__main__":
     cli()
