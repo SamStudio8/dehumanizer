@@ -191,6 +191,11 @@ def cli():
     parser = argparse.ArgumentParser()
     parser.add_argument("manifest", help="reference manifest")
     parser.add_argument("dirty", help="input dirty file")
+
+    type_p = parser.add_mutually_exclusive_group(required=True)
+    type_p.add_argument("--bam", action="store_true")
+    type_p.add_argument("--fastx", action="store_true")
+
     parser.add_argument("-o", "--clean", help="output clean file [default -]", default="-")
 
     parser.add_argument("-t", "--threads", help="number of minimap2 process queues to spawn PER REFERENCE [1]", default=1, type=int)
