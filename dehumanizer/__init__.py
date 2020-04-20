@@ -162,24 +162,13 @@ def main(args):
         clean_fq = open(clean_fq_p, 'w')
         sys.stderr.write("[INFO] Writing FASTX %s\n" % (clean_fq_p))
 
-    #if args.keepdirty:
-    #    dirty_fq_p = os.path.join(args.clean, "%s.%s.%s" % (".".join(fp[:-1]), "dehumanizer.dirty", fp[-1]))
-    #    dirty_fq = open(dirty_fq_p, 'w') #TODO gzip?
-
 
     # Output FASTX
-    #if args.keepdirty:
-    #    sys.stderr.write("[%d/%d] Writing FASTX %s\n" % (fastx_i+1, len(seqs), dirty_fq_p))
     for read_i, read_tuple in enumerate(mp.fastx_read(fastx_path)):
 
         if not flat_dropped[read_i]:
             clean_fq.write("@%s\n%s\n+\n%s\n" % (read_tuple[0], read_tuple[1], read_tuple[2]))
-        #else:
-        #    if args.keepdirty:
-        #        dirty_fq.write(str(read)+'\n')
     clean_fq.close()
-    #if args.keepdirty:
-    #    dirty_fq.close()
 
     each_dropped = list( super_flag_matrix.sum(axis=0) )
     log.write("%s\t%d\t%d\t%d\t-\t%s\n" % (os.path.basename(clean_fq_p), n_seqs, total_dropped, n_seqs-total_dropped, "\t".join([str(x) for x in each_dropped])))
@@ -204,9 +193,7 @@ def cli():
     parser.add_argument("--minlen", help="min proportion of read aligned to accept a hit [report any hit]", type=float)
 
     parser.add_argument("--nobreak", help="dont break on the first database hit [False]", action="store_true", default=False)
-    #parser.add_argument("--extension", help="dirty is a folder, containing files to clean with a particular extension", default=None)
     parser.add_argument("--blockrep", help="report progress after a block of N sequences [100000]", default=100000, type=int)
-    #parser.add_argument("--keepdirty", help="make a file of the dirty sequences in the same location as clean [False]", action="store_true", default=False)
 
     main(parser.parse_args())
 
