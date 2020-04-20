@@ -30,8 +30,8 @@ def load_manifest(path, preset):
     return manifest
 
 
-def df_bam(log, manifest, args):
-    dirty_bam = pysam.AlignmentFile(args.dirty)
+def dh_bam(log, manifest, args):
+    dirty_bam = pysam.AlignmentFile(args.dirty, "r")
     clean_bam = pysam.AlignmentFile(args.clean, "wb", template=dirty_bam)
 
     aligners = []
@@ -39,34 +39,38 @@ def df_bam(log, manifest, args):
     for ref_i, ref_manifest in enumerate(manifest["references"]):
         aligners.append( mp.Aligner(ref_manifest["path"], preset=manifest["preset"]) )
         each_dropped.append(0)
-    sys.stderr.write("[%d:] minimap2 aligners ready.\n" % (block_i))
+    sys.stderr.write("[INFO] minimap2 aligners ready.\n")
 
 
     n_seqs = 0
     n_baddies = 0
-    for read in dirty_bam.fetch():
+    for read in dirty_bam.fetch(until_eof=True):
         n_seqs += 1
         read_is_bad = False
         for ref_i, ref_manifest in enumerate(manifest["references"]):
             for hit in aligners[ref_i].map(read.query_sequence):
 
-                if args.minlen:
-                    st = min(hit.q_st, hit.q_en)
-                    en = max(hit.q_st, hit.q_en)
-                    if ((en - st) / len(work["seq"])) * 100 >= args.minlen:
-                        read_is_bad = True
+                if not args.minlen or args.minid:
+                    # a hit is a hit
+                    read_is_bad = True
+                else:
+                    if args.minlen:
+                        st = min(hit.q_st, hit.q_en)
+                        en = max(hit.q_st, hit.q_en)
+                        if ((en - st) / len(read.query_sequence)) * 100 >= args.minlen:
+                            read_is_bad = True
 
-                if args.minid:
-                    # http://lh3.github.io/2018/11/25/on-the-definition-of-sequence-identity
-                    # "In the PAF format, column 10 divived by column 11 gives the BLAST identity."
-                    bscore = hit.mlen / hit.blen
-                    if bscore * 100 >= args.minid:
-                        read_is_bad = True
+                    if args.minid:
+                        # http://lh3.github.io/2018/11/25/on-the-definition-of-sequence-identity
+                        # "In the PAF format, column 10 divived by column 11 gives the BLAST identity."
+                        bscore = hit.mlen / hit.blen
+                        if bscore * 100 >= args.minid:
+                            read_is_bad = True
 
                 # Criteria satisifed
                 if read_is_bad:
                     each_dropped[ref_i] += 1
-                    if break_first:
+                    if args.break_first:
                         break
 
             else:
