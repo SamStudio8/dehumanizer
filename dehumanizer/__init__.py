@@ -52,7 +52,11 @@ def dh_bam(log, manifest, args):
 
         # Check if the read is trash
         if args.trash_minalen:
-            if (read.reference_length/read.query_length)*100.0 < args.trash_minalen:
+            try:
+                if (read.reference_length/read.query_length)*100.0 < args.trash_minalen:
+                    read_is_bad = True
+                    n_trash += 1
+            except ZeroDivisionError: 
                 read_is_bad = True
                 n_trash += 1
 
