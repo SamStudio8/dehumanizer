@@ -30,7 +30,7 @@ def load_manifest(path, preset):
     return manifest
 
 
-def dh_bam(log, manifest, args):
+def dh_bam(log, manifest, bad_set, args):
     dirty_bam = pysam.AlignmentFile(args.dirty)
     clean_bam = pysam.AlignmentFile(args.clean, "wb", template=dirty_bam)
     break_first = not args.nobreak # break on first hit, otherwise we can use this to 'survey' hits to different databases
@@ -44,64 +44,87 @@ def dh_bam(log, manifest, args):
 
 
     n_seqs = 0
+    n_good = 0
     n_trash = 0
+    n_known = 0
+    n_collateral = 0
     n_baddies = 0
+
+    bad_seen = set([])
+
     for read in dirty_bam.fetch(until_eof=True):
         n_seqs += 1
         read_is_bad = False
 
-        # Check if the read is trash
-        if args.trash_minalen:
-            try:
-                if (read.reference_length/read.query_length)*100.0 < args.trash_minalen:
+        for ref_i, ref_manifest in enumerate(manifest["references"]):
+            for hit in aligners[ref_i].map(read.query_sequence):
+
+                if not args.minlen or not args.minid:
+                    # a hit is a hit
+                    read_is_bad = True
+                else:
+                    if args.minlen:
+                        st = min(hit.q_st, hit.q_en)
+                        en = max(hit.q_st, hit.q_en)
+                        if ((en - st) / len(read.query_sequence)) * 100 >= args.minlen:
+                            read_is_bad = True
+
+                    if args.minid:
+                        # http://lh3.github.io/2018/11/25/on-the-definition-of-sequence-identity
+                        # "In the PAF format, column 10 divived by column 11 gives the BLAST identity."
+                        bscore = hit.mlen / hit.blen
+                        if bscore * 100 >= args.minid:
+                            read_is_bad = True
+
+                # Criteria satisifed
+                if read_is_bad:
+                    each_dropped[ref_i] += 1
+                    if break_first:
+                        break
+
+            else:
+                # Continue the outer loop to the next aligner, as no hit was found
+                continue
+            # Break the aligner loop as we've already break'ed a hit
+            break
+
+        if read_is_bad:
+            n_baddies += 1
+
+
+        # Check if the read is trash instead
+        if not read_is_bad:
+            if args.trash_minalen:
+                try:
+                    if (read.reference_length/read.query_length)*100.0 < args.trash_minalen:
+                        read_is_bad = True
+                        n_trash += 1
+                except ZeroDivisionError: 
                     read_is_bad = True
                     n_trash += 1
-            except ZeroDivisionError: 
+
+        # Check if the read is on the shitlist
+        if not read_is_bad:
+            if read.query_name in bad_set:
                 read_is_bad = True
-                n_trash += 1
+                n_known += 1
 
-        # If the read is not already trash, see if it maps against the references
+        # Finally, check if the QNAME has been tossed out already
         if not read_is_bad:
-            for ref_i, ref_manifest in enumerate(manifest["references"]):
-                for hit in aligners[ref_i].map(read.query_sequence):
+            if read.query_name in bad_seen:
+                read_is_bad = True
+                n_collateral += 1
 
-                    if not args.minlen or not args.minid:
-                        # a hit is a hit
-                        read_is_bad = True
-                    else:
-                        if args.minlen:
-                            st = min(hit.q_st, hit.q_en)
-                            en = max(hit.q_st, hit.q_en)
-                            if ((en - st) / len(read.query_sequence)) * 100 >= args.minlen:
-                                read_is_bad = True
 
-                        if args.minid:
-                            # http://lh3.github.io/2018/11/25/on-the-definition-of-sequence-identity
-                            # "In the PAF format, column 10 divived by column 11 gives the BLAST identity."
-                            bscore = hit.mlen / hit.blen
-                            if bscore * 100 >= args.minid:
-                                read_is_bad = True
-
-                    # Criteria satisifed
-                    if read_is_bad:
-                        each_dropped[ref_i] += 1
-                        if break_first:
-                            break
-
-                else:
-                    # Continue the outer loop to the next aligner, as no hit was found
-                    continue
-                # Break the aligner loop as we've already break'ed a hit
-                break
-
-            if read_is_bad:
-                n_baddies += 1
-
+        # If the read really is good, write it out
         if not read_is_bad:
+            n_good += 1
             clean_bam.write(read)
+        else:
+            bad_seen.add(read.query_name)
 
-    sys.stderr.write("[INFO] Took out %d trash sequences, and disposed of %d contaminating sequences\n" % (n_trash, n_baddies))
-    log.write("%s\t%d\t%s\t%d\t%d\t-\t%s\n" % (os.path.basename(args.clean), n_seqs, n_baddies, n_trash, n_seqs-(n_baddies+n_trash), "\t".join([str(x) for x in each_dropped])))
+    sys.stderr.write("[INFO] Took out %d trash sequences, disposed of %d contaminating sequences and removed %d previously known bad sequences\n" % (n_trash, n_baddies, n_known))
+    log.write("%s\t%d\t%s\t%d\t%d\t%d\t%d\t-\t%s\n" % (os.path.basename(args.clean), n_seqs, n_baddies, n_trash, n_known, n_collateral, n_good, "\t".join([str(x) for x in each_dropped])))
 
     dirty_bam.close()
     clean_bam.close()
@@ -239,7 +262,7 @@ def dh_fastx(log, manifest, args):
     clean_fq.close()
 
     each_dropped = list( super_flag_matrix.sum(axis=0) )
-    log.write("%s\t%d\t%d\t%d\t%d\t-\t%s\n" % (os.path.basename(clean_fq_p), n_seqs, total_dropped, 0, n_seqs-total_dropped, "\t".join([str(x) for x in each_dropped])))
+    log.write("%s\t%d\t%d\t%d\t%d\t%d\t%d\t-\t%s\n" % (os.path.basename(clean_fq_p), n_seqs, total_dropped, 0, 0, 0, n_seqs-total_dropped, "\t".join([str(x) for x in each_dropped])))
 
 
 def cli():
@@ -247,6 +270,8 @@ def cli():
     parser = argparse.ArgumentParser()
     parser.add_argument("manifest", help="reference manifest")
     parser.add_argument("dirty", help="input dirty file")
+
+    parser.add_argument("--known", help="CSV of dirty reads in the format read,pos,flag")
 
     type_p = parser.add_mutually_exclusive_group(required=True)
     type_p.add_argument("--bam", action="store_true")
@@ -280,12 +305,13 @@ def cli():
         log = open(args.log, 'w')
 
     manifest = load_manifest(args.manifest, args.preset)
-    log.write("name\tn_sequences\tn_dropped\tn_trash\tn_saved\t-\t%s\n" % "\t".join([x["name"] for x in manifest["references"]]))
+    log.write("name\tn_sequences\tn_dropped\tn_trash\tn_known\tn_collateral\tn_saved\t-\t%s\n" % "\t".join([x["name"] for x in manifest["references"]]))
 
     if args.fastx:
         dh_fastx(log, manifest, args)
     elif args.bam:
-        dh_bam(log, manifest, args)
+        bad_set = set([])
+        dh_bam(log, manifest, bad_set, args)
 
     log.close()
 
