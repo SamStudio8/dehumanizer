@@ -138,7 +138,17 @@ def dh_bam(log, manifest, bad_set, args):
             clean_bam.write(read)
 
     sys.stderr.write("[INFO] %d sequences in, %d sequences out\n" % (n_seqs, n_good))
-    log.write("%s\t%d\t%s\t%d\t%d\t%d\t%d\t-\t%s\n" % (os.path.basename(args.clean), n_seqs, n_baddies, n_trash, n_known, n_collateral, n_good, "\t".join([str(x) for x in each_dropped])))
+    log.write("\t".join([str(x) for x in [
+        os.path.basename(args.clean),
+        n_seqs,
+        n_seqs - n_good,
+        n_good,
+        n_baddies,
+        n_trash,
+        n_known,
+        n_collateral,
+        "-"
+        ]] + [str(x) for x in each_dropped]) + '\n')
 
     dirty_bam.close()
     clean_bam.close()
@@ -270,13 +280,25 @@ def dh_fastx(log, manifest, args):
 
 
     # Output FASTX
+    n_good = 0
     for read_i, read_tuple in enumerate(mp.fastx_read(fastx_path)):
         if not flat_dropped[read_i]:
+            n_good += 1
             clean_fq.write("@%s\n%s\n+\n%s\n" % (read_tuple[0], read_tuple[1], read_tuple[2]))
     clean_fq.close()
 
     each_dropped = list( super_flag_matrix.sum(axis=0) )
-    log.write("%s\t%d\t%d\t%d\t%d\t%d\t%d\t-\t%s\n" % (os.path.basename(clean_fq_p), n_seqs, total_dropped, 0, 0, 0, n_seqs-total_dropped, "\t".join([str(x) for x in each_dropped])))
+    log.write("\t".join([str(x) for x in [
+        os.path.basename(clean_fq_p),
+        n_seqs,
+        n_seqs - n_good,
+        n_good,
+        total_dropped,
+        0,
+        0,
+        0,
+        "-"
+        ]] + [str(x) for x in each_dropped]) + '\n')
 
 
 def cli():
@@ -319,7 +341,18 @@ def cli():
         log = open(args.log, 'w')
 
     manifest = load_manifest(args.manifest, args.preset)
-    log.write("name\tn_sequences\tn_dropped\tn_trash\tn_known\tn_collateral\tn_saved\t-\t%s\n" % "\t".join([x["name"] for x in manifest["references"]]))
+
+    log.write("\t".join([
+        "name",
+        "seqs_in",
+        "seqs_total_dropped",
+        "seqs_out",
+        "n_hits",
+        "n_clipped",
+        "n_known",
+        "n_collateral",
+        "-"
+    ] + [x["name"] for x in manifest["references"]]) + '\n')
 
     if args.fastx:
         dh_fastx(log, manifest, args)
