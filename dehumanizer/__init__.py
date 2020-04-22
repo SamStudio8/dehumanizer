@@ -52,8 +52,16 @@ def dh_bam(log, manifest, bad_set, args):
 
     bad_seen = set([])
 
+    # First pass to get the number of sequences without an index
     for read in dirty_bam.fetch(until_eof=True):
         n_seqs += 1
+    dirty_bam.close()
+
+    bad_mask = np.zeros(n_seqs, dtype=np.bool)
+
+    # Second pass to establish a bit mask of what to keep
+    dirty_bam = pysam.AlignmentFile(args.dirty)
+    for r_i, read in enumerate(dirty_bam.fetch(until_eof=True)):
         read_is_bad = False
 
         for ref_i, ref_manifest in enumerate(manifest["references"]):
@@ -109,21 +117,27 @@ def dh_bam(log, manifest, bad_set, args):
                 read_is_bad = True
                 n_known += 1
 
-        # Finally, check if the QNAME has been tossed out already
-        if not read_is_bad:
-            if read.query_name in bad_seen:
-                read_is_bad = True
-                n_collateral += 1
-
-
-        # If the read really is good, write it out
-        if not read_is_bad:
-            n_good += 1
-            clean_bam.write(read)
-        else:
+        if read_is_bad:
+            bad_mask[r_i] = 1
             bad_seen.add(read.query_name)
 
-    sys.stderr.write("[INFO] Took out %d trash sequences, disposed of %d contaminating sequences and removed %d previously known bad sequences\n" % (n_trash, n_baddies, n_known))
+    dirty_bam.close()
+
+    # Third and final pass to write
+    dirty_bam = pysam.AlignmentFile(args.dirty)
+    for r_i, read in enumerate(dirty_bam.fetch(until_eof=True)):
+
+        # If the read really is good, write it out
+        if not bad_mask[r_i]:
+            # Finally, check if the QNAME has been tossed out already
+            if read.query_name in bad_seen:
+                n_collateral += 1
+                continue
+
+            n_good += 1
+            clean_bam.write(read)
+
+    sys.stderr.write("[INFO] %d sequences in, %d sequences out\n" % (n_seqs, n_good))
     log.write("%s\t%d\t%s\t%d\t%d\t%d\t%d\t-\t%s\n" % (os.path.basename(args.clean), n_seqs, n_baddies, n_trash, n_known, n_collateral, n_good, "\t".join([str(x) for x in each_dropped])))
 
     dirty_bam.close()
