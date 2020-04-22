@@ -285,7 +285,7 @@ def cli():
     parser.add_argument("manifest", help="reference manifest")
     parser.add_argument("dirty", help="input dirty file")
 
-    parser.add_argument("--known", help="CSV of dirty reads in the format read,pos,flag")
+    parser.add_argument("--known", help="new-line delimited list of reads known to be dirty")
 
     type_p = parser.add_mutually_exclusive_group(required=True)
     type_p.add_argument("--bam", action="store_true")
@@ -325,6 +325,8 @@ def cli():
         dh_fastx(log, manifest, args)
     elif args.bam:
         bad_set = set([])
+        if args.known:
+            bad_set = set([x.strip() for x in open(args.known)])
         dh_bam(log, manifest, bad_set, args)
 
     log.close()
