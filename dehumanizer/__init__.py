@@ -62,6 +62,10 @@ def dh_bam(log, manifest, bad_set, args):
     # Second pass to establish a bit mask of what to keep
     dirty_bam = pysam.AlignmentFile(args.dirty)
     for r_i, read in enumerate(dirty_bam.fetch(until_eof=True)):
+
+        if not read.query_sequence:
+            continue # supp alignment or something, its up to the user to trash these
+
         read_is_bad = False
 
         for ref_i, ref_manifest in enumerate(manifest["references"]):
