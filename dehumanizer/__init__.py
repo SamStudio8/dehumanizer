@@ -7,7 +7,9 @@ import mappy as mp
 import numpy as np
 import pysam
 from datetime import datetime
+from datetime import date
 
+from . import version
 
 def load_manifest(path, preset):
     manifest = {
@@ -32,7 +34,16 @@ def load_manifest(path, preset):
 
 def dh_bam(log, manifest, bad_set, args):
     dirty_bam = pysam.AlignmentFile(args.dirty)
-    clean_bam = pysam.AlignmentFile(args.clean, "wb", template=dirty_bam)
+
+    dirty_header = dirty_bam.header.as_dict()
+    dirty_header["PG"].append({
+        "ID": 'dehumanizer.%s' % date.today().strftime("%Y%m%d"),
+        "PN": 'dehumanizer',
+        "VN": version.__version__,
+        "CL": " ".join(sys.argv),
+    })
+    clean_header = pysam.AlignmentHeader.from_dict(dirty_header)
+    clean_bam = pysam.AlignmentFile(args.clean, "wb", header=clean_header)
     break_first = not args.nobreak # break on first hit, otherwise we can use this to 'survey' hits to different databases
 
     aligners = []

@@ -2,10 +2,11 @@
 # -*- coding: utf-8 -*-
 
 import setuptools
+from dehumanizer import version
 
 setuptools.setup(
     name="dehumanizer",
-    version="0.7.4",
+    version=version.__version__,
     url="https://github.com/samstudio8/dehumanizer",
 
     description="A command line tool for rapidly ridding reads of horrid humans",
