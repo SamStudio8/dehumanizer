@@ -29,8 +29,8 @@ setuptools.setup(
 
     entry_points = {
         "console_scripts": [
-            "dehumanize=dehumanizer:cli",
-            "dehumanise=dehumanizer:cli",
+            "dehumanize=dehumanizer.dehumanizer:cli",
+            "dehumanise=dehumanizer.dehumanizer:cli",
         ]
     },
 
