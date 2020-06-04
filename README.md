@@ -19,7 +19,7 @@ echo "HLA $(pwd)/ipd-imgt-3_39_0.hla_gen.mmi" >> manifest.txt
 
 #### Go go go
 ```
-python run.py manifest.txt <dirty_thing> (--bam|--fastx) -o <clean_thing> --preset <mappy_preset>
+dehumanise <manifest> --bam <bam> --preset <minimap2_preset> -o <out.bam> --log <log>
 ```
 
 ### How do I install it?
