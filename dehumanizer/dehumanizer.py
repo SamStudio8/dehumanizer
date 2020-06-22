@@ -36,6 +36,8 @@ def dh_bam(log, manifest, bad_set, args):
     dirty_bam = pysam.AlignmentFile(args.dirty)
 
     dirty_header = dirty_bam.header.as_dict()
+    if "PG" not in dirty_header:
+        dirty_header["PG"] = []
     dirty_header["PG"].append({
         "ID": 'dehumanizer.%s' % date.today().strftime("%Y%m%d"),
         "PN": 'dehumanizer',
