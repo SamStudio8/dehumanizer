@@ -19,6 +19,9 @@ echo "HLA $(pwd)/ipd-imgt-3_39_0.hla_gen.mmi" >> manifest.txt
 
 #### Go go go
 ```
+dehumanise <manifest> --fastx <fastq> --preset <minimap2_preset> -o <out.bam> --log <log>
+```
+```
 dehumanise <manifest> --bam <bam> --preset <minimap2_preset> -o <out.bam> --log <log>
 ```
 
