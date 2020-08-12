@@ -301,7 +301,14 @@ def dh_fastx(log, manifest, args):
     for read_i, read_tuple in enumerate(mp.fastx_read(fastx_path)):
         if not flat_dropped[read_i]:
             n_good += 1
-            clean_fq.write("@%s\n%s\n+\n%s\n" % (read_tuple[0], read_tuple[1], read_tuple[2]))
+            if read_tuple[2] is None:
+                out_read = ">%s\n%s\n" % (read_tuple[0],
+                                          read_tuple[1])
+            else:
+                out_read = "@%s\n%s\n+\n%s\n" % (read_tuple[0],
+                                                 read_tuple[1],
+                                                 read_tuple[2])
+            clean_fq.write(out_read)
     clean_fq.close()
 
     each_dropped = list( super_flag_matrix.sum(axis=0) )
