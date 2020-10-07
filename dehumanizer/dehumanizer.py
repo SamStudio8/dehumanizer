@@ -36,10 +36,16 @@ def dh_bam(log, manifest, bad_set, args):
     dirty_bam = pysam.AlignmentFile(args.dirty)
 
     dirty_header = dirty_bam.header.as_dict()
+
+    pg_date = date.today().strftime("%Y%m%d")
+    if args.pg_date:
+        if len(args.pg_date) > 0:
+            pg_date = args.pg_date
+
     if "PG" not in dirty_header:
         dirty_header["PG"] = []
     dirty_header["PG"].append({
-        "ID": 'dehumanizer.%s' % date.today().strftime("%Y%m%d"),
+        "ID": 'dehumanizer.%s' % pg_date,
         "PN": 'dehumanizer',
         "VN": version.__version__,
         "CL": " ".join(sys.argv),
@@ -352,6 +358,8 @@ def cli():
 
     # Not really the place for it, but whatever
     parser.add_argument("--trash-minalen", help="trash reads whose alignment length is less than this %proportion of their size [keep everything] ignored if not BAM", type=float, default=None)
+
+    parser.add_argument("--pg-date", help="datestamp to insert into BAM PG header [default today in format YYYYMMDD]", default="")
 
     args = parser.parse_args()
 
