@@ -54,12 +54,12 @@ def dh_bam(log, manifest, bad_set, args):
     clean_bam = pysam.AlignmentFile(args.clean, "wb", header=clean_header)
     break_first = not args.nobreak # break on first hit, otherwise we can use this to 'survey' hits to different databases
 
-    aligners = []
+    #aligners = []
     each_dropped = []
     for ref_i, ref_manifest in enumerate(manifest["references"]):
-        aligners.append( mp.Aligner(ref_manifest["path"], preset=manifest["preset"]) )
+        #aligners.append( mp.Aligner(ref_manifest["path"], preset=manifest["preset"]) )
         each_dropped.append(0)
-    sys.stderr.write("[INFO] minimap2 aligners ready.\n")
+    #sys.stderr.write("[INFO] minimap2 aligners ready.\n")
 
 
     n_seqs = 0
@@ -67,91 +67,198 @@ def dh_bam(log, manifest, bad_set, args):
     n_trash = 0
     n_known = 0
     n_collateral = 0
-    n_baddies = 0
 
     bad_seen = set([])
 
-    # First pass to get the number of sequences without an index
-    for read in dirty_bam.fetch(until_eof=True):
-        n_seqs += 1
+    start = datetime.now()
+    if dirty_bam.has_index():
+        n_seqs = dirty_bam.mapped + dirty_bam.unmapped
+    else:
+        # First pass to get the number of sequences without an index
+        for read in dirty_bam.fetch(until_eof=True):
+            n_seqs += 1
     dirty_bam.close()
+    end = datetime.now()
+    sys.stderr.write('count ' + str(end - start) + '\n')
+
+    the_start = datetime.now()
 
     bad_mask = np.zeros(n_seqs, dtype=np.bool)
 
-    # Second pass to establish a bit mask of what to keep
-    dirty_bam = pysam.AlignmentFile(args.dirty)
-    for r_i, read in enumerate(dirty_bam.fetch(until_eof=True)):
+    sys.stderr.write("[INFO] Preparing memory for flags.\n")
+    super_flag_matrix = np.frombuffer(Array(ctypes.c_bool, n_seqs*len(manifest["references"]), lock=False), dtype=ctypes.c_bool)
+    super_flag_matrix = super_flag_matrix.reshape(n_seqs, len(manifest["references"]))
+    sys.stderr.write("[INFO] Raised %d x %d flags.\n" % (n_seqs, len(manifest["references"])))
 
-        if not read.query_sequence:
-            continue # supp alignment or something, its up to the user to trash these
+    def map_seqs(dirty_bam_fp, preset, manifest, break_first, window):
+        start = datetime.now()
+        #aligner = mp.Aligner(ref_manifest["path"], preset=preset)
 
-        read_is_bad = False
-
+        aligners = []
         for ref_i, ref_manifest in enumerate(manifest["references"]):
-            for hit in aligners[ref_i].map(read.query_sequence):
+            #sys.stderr.write("[%d:%d/%d] Booting minimap2 aligners.\n" % (block_i, ref_i+1, len(manifest["references"])))
+            aligners.append( mp.Aligner(ref_manifest["path"], preset=manifest["preset"]) )
+        sys.stderr.write("[%d:] minimap2 aligners ready.\n" % (ref_i))
 
-                if not args.minlen or not args.minid:
-                    # a hit is a hit
-                    read_is_bad = True
-                else:
-                    if args.minlen:
-                        st = min(hit.q_st, hit.q_en)
-                        en = max(hit.q_st, hit.q_en)
-                        if ((en - st) / len(read.query_sequence)) * 100 >= args.minlen:
-                            read_is_bad = True
-
-                    if args.minid:
-                        # http://lh3.github.io/2018/11/25/on-the-definition-of-sequence-identity
-                        # "In the PAF format, column 10 divived by column 11 gives the BLAST identity."
-                        bscore = hit.mlen / hit.blen
-                        if bscore * 100 >= args.minid:
-                            read_is_bad = True
-
-                # Criteria satisifed
-                if read_is_bad:
-                    each_dropped[ref_i] += 1
-                    if break_first:
-                        break
-
-            else:
-                # Continue the outer loop to the next aligner, as no hit was found
+        # Second pass to establish a bit mask of what to keep
+        dirty_bam = pysam.AlignmentFile(dirty_bam_fp)
+        read_i = -1
+        for read in dirty_bam.fetch(contig=dirty_bam.references[0], start=window["start"], end=window["end"]):
+            # If read ref start (0 pos) before this block (0 pos), skip it
+            if read.reference_start < window["start"]:
                 continue
-            # Break the aligner loop as we've already break'ed a hit
-            break
 
-        if read_is_bad:
-            n_baddies += 1
+            read_i += 1
+            r_i = read_i + window["offset"]
+
+            if not read.query_sequence:
+                continue # supp alignment or something, its up to the user to trash these
+
+            read_is_bad = False
 
 
-        # Check if the read is trash instead
-        if not read_is_bad:
-            if args.trash_minalen:
-                try:
-                    if (read.reference_length/read.query_length)*100.0 < args.trash_minalen:
+            for ref_i, ref_manifest in enumerate(manifest["references"]):
+                for hit in aligners[ref_i].map(read.query_sequence):
+
+                    if not args.minlen or not args.minid:
+                        # a hit is a hit
+                        read_is_bad = True
+                    else:
+                        if args.minlen:
+                            st = min(hit.q_st, hit.q_en)
+                            en = max(hit.q_st, hit.q_en)
+                            if ((en - st) / len(read.query_sequence)) * 100 >= args.minlen:
+                                read_is_bad = True
+
+                        if args.minid:
+                            # http://lh3.github.io/2018/11/25/on-the-definition-of-sequence-identity
+                            # "In the PAF format, column 10 divived by column 11 gives the BLAST identity."
+                            bscore = hit.mlen / hit.blen
+                            if bscore * 100 >= args.minid:
+                                read_is_bad = True
+
+                    # Criteria satisifed
+                    if read_is_bad:
+                        each_dropped[ref_i] += 1
+                        if break_first:
+                            break
+
+                else:
+                    # Continue the outer loop to the next aligner, as no hit was found
+                    continue
+                # Break the aligner loop as we've already break'ed a hit
+                break
+
+
+            # Check if the read is trash instead
+            if not read_is_bad:
+                if args.trash_minalen:
+                    try:
+                        if (read.reference_length/read.query_length)*100.0 < args.trash_minalen:
+                            read_is_bad = True
+                            n_trash += 1
+                    except ZeroDivisionError: 
                         read_is_bad = True
                         n_trash += 1
-                except ZeroDivisionError: 
+
+            # Check if the read is on the shitlist
+            if not read_is_bad:
+                if read.query_name in bad_set:
                     read_is_bad = True
-                    n_trash += 1
+                    n_known += 1
 
-        # Check if the read is on the shitlist
-        if not read_is_bad:
-            if read.query_name in bad_set:
-                read_is_bad = True
-                n_known += 1
+            if read_is_bad:
+                #bad_mask[r_i] = 1
+                super_flag_matrix[r_i][ref_i] = 1
+                bad_seen.add(read.query_name)
 
-        if read_is_bad:
-            bad_mask[r_i] = 1
-            bad_seen.add(read.query_name)
+        dirty_bam.close()
+        end = datetime.now()
+        sys.stderr.write('read ' + str(end - start) + '\n')
+        start = datetime.now()
+
+    processes = []
+
+    dirty_bam = pysam.AlignmentFile(args.dirty)
+    n_threads = 3
+    ref_len = dirty_bam.get_reference_length(dirty_bam.references[0])
+    block_size = int(ref_len / n_threads)
+
+    windows = []
+    start = end = None
+
+    offsets = []
+    window_pos = 0
+    for window_i in range(n_threads):
+
+        if window_i == 0:
+            start = 0
+        else:
+            start = window_pos
+
+        if window_i == n_threads - 1:
+            end = ref_len
+        else:
+            end = window_pos + block_size - 1 # prevent end running into next block
+        window_pos += block_size
+
+        windows.append({
+            "start": start,
+            "end": end,
+            "offset": dirty_bam.count(contig=dirty_bam.references[0], start=0, end=start, read_callback="nofilter"),
+        })
+        offsets.append(0)
+
+    """
+    current_offset = 0
+    current_window_i = 0
+    current_window_end = windows[0]["end"]
+
+    for read in dirty_bam.fetch(contig=dirty_bam.references[0]):
+        if read.reference_start >= current_window_end:
+            current_window_i += 1
+            offsets[current_window_i] = current_offset
+            if current_window_i == len(windows)-1:
+                break
+            current_window_end = windows[current_window_i]["end"]
+        current_offset += 1
+
+    for oi, offset in enumerate(offsets):
+        windows[oi]["offset"] = offset
+    """
+
+
+    # First pass to get the number of sequences without an index
 
     dirty_bam.close()
+
+    end = datetime.now()
+    sys.stderr.write('thing ' + str(end - the_start) + '\n')
+    start = datetime.now()
+
+    for window in windows:
+        print(window)
+        p = Process(target=map_seqs, args=(args.dirty,manifest["preset"],manifest,break_first,window))
+        processes.append(p)
+
+    for p in processes:
+        p.start()
+
+    # Wait for processes to complete work
+    for p in processes:
+        p.join()
+
+    flat_dropped = ( super_flag_matrix.sum(axis=1) > 0 )
+    total_dropped = flat_dropped.sum()
+    sys.stderr.write("[INFO] Dropped %d sequences\n" % (flat_dropped.sum()))
+    start = datetime.now()
 
     # Third and final pass to write
     dirty_bam = pysam.AlignmentFile(args.dirty)
     for r_i, read in enumerate(dirty_bam.fetch(until_eof=True)):
 
         # If the read really is good, write it out
-        if not bad_mask[r_i]:
+        if not flat_dropped[r_i]:
             # Finally, check if the QNAME has been tossed out already
             if read.query_name in bad_seen:
                 n_collateral += 1
@@ -160,13 +267,16 @@ def dh_bam(log, manifest, bad_set, args):
             n_good += 1
             clean_bam.write(read)
 
+    end = datetime.now()
+    sys.stderr.write('write ' + str(end - start) + '\n')
+    start = datetime.now()
     sys.stderr.write("[INFO] %d sequences in, %d sequences out\n" % (n_seqs, n_good))
     log.write("\t".join([str(x) for x in [
         os.path.basename(args.clean),
         n_seqs,
         n_seqs - n_good,
         n_good,
-        n_baddies,
+        total_dropped,
         n_trash,
         n_known,
         n_collateral,
@@ -333,6 +443,8 @@ def dh_fastx(log, manifest, args):
 
 def cli():
     import argparse
+    from dehumanizer import version
+
     parser = argparse.ArgumentParser()
     parser.add_argument("manifest", help="reference manifest")
     parser.add_argument("dirty", help="input dirty file")
@@ -350,17 +462,18 @@ def cli():
 
     parser.add_argument("-t", "--threads", help="number of minimap2 process queues to spawn PER REFERENCE [1]", default=1, type=int)
     parser.add_argument("-n", help="number of reads (prevents having to count)", type=int)
-    parser.add_argument("--minid", help="min %proportion of (L-NM)/L to determine a hit [use all hits]", type=float, default=None)
-    parser.add_argument("--minlen", help="min %proportion of read aligned to accept a hit [use all hits]", type=float, default=None)
+    parser.add_argument("--minid", help="min %%proportion of (L-NM)/L to determine a hit [use all hits]", type=float, default=None)
+    parser.add_argument("--minlen", help="min %%proportion of read aligned to accept a hit [use all hits]", type=float, default=None)
 
     parser.add_argument("--nobreak", help="dont break on the first database hit [False]", action="store_true", default=False)
     parser.add_argument("--blockrep", help="report progress after a block of N sequences [100000]", default=100000, type=int)
 
     # Not really the place for it, but whatever
-    parser.add_argument("--trash-minalen", help="trash reads whose alignment length is less than this %proportion of their size [keep everything] ignored if not BAM", type=float, default=None)
+    parser.add_argument("--trash-minalen", help="trash reads whose alignment length is less than this %%proportion of their size [keep everything] ignored if not BAM", type=float, default=None)
 
     parser.add_argument("--pg-date", help="datestamp to insert into BAM PG header [default today in format YYYYMMDD]", default="")
 
+    parser.add_argument("--version", action="version", version="%(prog)s " + version.__version__)
     args = parser.parse_args()
 
     #if not args.minid and not args.minlen:
