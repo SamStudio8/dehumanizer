@@ -1,5 +1,4 @@
 from multiprocessing import Process, Queue, Array
-import argparse
 import ctypes
 import sys
 import os
@@ -24,10 +23,26 @@ def load_manifest(path, preset):
         if line[0] == '#':
             continue
 
+        if len(fields) < 3:
+            sys.stderr.write("[FAIL] Manifest did not contain a third column mapping a reference to a preset\n")
+            sys.stderr.write("       Consult the README to ensure you are using a manifest suitable for dehumaniser >= 0.9.0\n")
+            sys.exit(78) # EX_CONFIG
+
+        if fields[2] != preset:
+            continue
+
         manifest["references"].append({
             "name": fields[0],
             "path": fields[1],
         })
+
+    if len(manifest["references"]) == 0:
+        sys.stderr.write("[FAIL] Manifest did not contain any references for preset=%s\n" % preset)
+        sys.stderr.write("       Consult the README to ensure your manifest is correctly configured and for\n")
+        sys.stderr.write("       instructions on how to build your own indexes if needed\n")
+        sys.exit(65) # EX_DATAERR
+    else:
+        sys.stderr.write("[NOTE] Detected %d references in manifest for preset=%s\n" % (len(manifest["references"]), preset))
     manifest_fh.close()
     return manifest
 
@@ -57,6 +72,7 @@ def dh_bam(log, manifest, bad_set, args):
     aligners = []
     each_dropped = []
     for ref_i, ref_manifest in enumerate(manifest["references"]):
+        sys.stderr.write("[INFO] Init minimap2 aligner: %s (%s)\n" % (ref_manifest["path"], manifest["preset"]))
         aligners.append( mp.Aligner(ref_manifest["path"], preset=manifest["preset"]) )
         each_dropped.append(0)
     sys.stderr.write("[INFO] minimap2 aligners ready.\n")
@@ -71,9 +87,12 @@ def dh_bam(log, manifest, bad_set, args):
 
     bad_seen = set([])
 
-    # First pass to get the number of sequences without an index
-    for read in dirty_bam.fetch(until_eof=True):
-        n_seqs += 1
+    if dirty_bam.has_index():
+        n_seqs = dirty_bam.mapped + dirty_bam.unmapped
+    else:
+        # First pass to get the number of sequences without an index
+        for read in dirty_bam.fetch(until_eof=True):
+            n_seqs += 1
     dirty_bam.close()
 
     bad_mask = np.zeros(n_seqs, dtype=np.bool)
@@ -333,7 +352,9 @@ def dh_fastx(log, manifest, args):
 
 def cli():
     import argparse
+
     parser = argparse.ArgumentParser()
+
     parser.add_argument("manifest", help="reference manifest")
     parser.add_argument("dirty", help="input dirty file")
 
@@ -350,16 +371,18 @@ def cli():
 
     parser.add_argument("-t", "--threads", help="number of minimap2 process queues to spawn PER REFERENCE [1]", default=1, type=int)
     parser.add_argument("-n", help="number of reads (prevents having to count)", type=int)
-    parser.add_argument("--minid", help="min %proportion of (L-NM)/L to determine a hit [use all hits]", type=float, default=None)
-    parser.add_argument("--minlen", help="min %proportion of read aligned to accept a hit [use all hits]", type=float, default=None)
+    parser.add_argument("--minid", help="min %%proportion of (L-NM)/L to determine a hit [use all hits]", type=float, default=None)
+    parser.add_argument("--minlen", help="min %%proportion of read aligned to accept a hit [use all hits]", type=float, default=None)
 
     parser.add_argument("--nobreak", help="dont break on the first database hit [False]", action="store_true", default=False)
     parser.add_argument("--blockrep", help="report progress after a block of N sequences [100000]", default=100000, type=int)
 
     # Not really the place for it, but whatever
-    parser.add_argument("--trash-minalen", help="trash reads whose alignment length is less than this %proportion of their size [keep everything] ignored if not BAM", type=float, default=None)
+    parser.add_argument("--trash-minalen", help="trash reads whose alignment length is less than this %%proportion of their size [keep everything] ignored if not BAM", type=float, default=None)
 
     parser.add_argument("--pg-date", help="datestamp to insert into BAM PG header [default today in format YYYYMMDD]", default="")
+
+    parser.add_argument("--version", action="version", version="%(prog)s " + version.__version__)
 
     args = parser.parse_args()
 
